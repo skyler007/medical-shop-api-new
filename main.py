@@ -44,9 +44,16 @@ def health_check():
 # This handles messy data from Vapi gracefully
 # ===================================================
 
+# ===================================================
+# REPLACE your existing vapi_webhook function in main.py
+# ===================================================
+
 @app.post("/api/vapi/webhook")
 async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
     try:
+        import re
+        from sqlalchemy import or_
+
         body = await request.json()
         print("Vapi webhook received:", body)
         message = body.get("message", {})
@@ -58,37 +65,62 @@ async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
                 return {"results": [{"toolCallId": "none", "result": "No order data"}]}
 
             tool_call = tool_calls[0]
+            tool_call_id = tool_call.get("id", "tool-1")
             function_args = tool_call.get("function", {}).get("arguments", {})
 
             # ── Clean medicines list ──────────────────────────────
             raw_medicines = function_args.get("medicines", [])
             cleaned_medicines = []
+            out_of_stock = []
+
             for m in raw_medicines:
-                # Extract just the number from quantity like "5 packs", "2 strips", "1"
+                med_name = m.get("name", "").strip()
+
+                # ── STOCK CHECK before adding to order ──
+                found = db.query(models.Medicine).filter(
+                    or_(
+                        models.Medicine.name.ilike(f"%{med_name}%"),
+                        models.Medicine.name_hindi.ilike(f"%{med_name}%"),
+                        models.Medicine.generic_name.ilike(f"%{med_name}%")
+                    )
+                ).first()
+
+                if not found or found.stock_quantity <= 0:
+                    print(f"Stock check FAILED: {med_name} -> out of stock or not found")
+                    out_of_stock.append(med_name)
+                    continue  # skip this medicine
+
+                print(f"Stock check OK: {med_name} -> qty={found.stock_quantity}")
+
+                # Clean quantity
                 raw_qty = str(m.get("quantity", "1"))
-                import re
                 qty_match = re.search(r'\d+', raw_qty)
                 qty = int(qty_match.group()) if qty_match else 1
 
-                # Normalize packaging
+                # Clean packaging
                 raw_pack = str(m.get("packaging", "strip")).lower()
-                valid_packagings = ["strip", "bottle", "box", "loose", "tube", "vial"]
-                packaging = "strip"  # default
-                for vp in valid_packagings:
+                packaging = "strip"
+                for vp in ["strip", "bottle", "box", "loose", "tube", "vial"]:
                     if vp in raw_pack:
                         packaging = vp
                         break
 
                 cleaned_medicines.append({
-                    "name": m.get("name", ""),
+                    "name": med_name,
                     "quantity": qty,
                     "packaging": packaging
                 })
 
+            # ── If ALL medicines are out of stock ────────────────
+            if not cleaned_medicines:
+                msg = "Sorry, ye medicines stock mein nahi hain: {}. Koi aur medicine chahiye?".format(
+                    ", ".join(out_of_stock))
+                print("All medicines out of stock:", out_of_stock)
+                return {"results": [{"toolCallId": tool_call_id, "result": msg}]}
+
             # ── Clean phone number ────────────────────────────────
             raw_phone = str(function_args.get("customer_phone", "0000000000"))
             digits_only = re.sub(r'\D', '', raw_phone)
-            # Add +91 if Indian number without country code
             if len(digits_only) == 10:
                 phone = "+91" + digits_only
             elif len(digits_only) > 10:
@@ -97,11 +129,9 @@ async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
                 phone = "+91" + digits_only.zfill(10)
 
             # ── Clean name ────────────────────────────────────────
-            customer_name = function_args.get("customer_name", "").strip()
-            if not customer_name:
-                customer_name = "Customer"
+            customer_name = function_args.get("customer_name", "").strip() or "Customer"
 
-            print(f"Cleaned order -> name={customer_name}, phone={phone}, medicines={cleaned_medicines}")
+            print(f"Placing order -> name={customer_name}, phone={phone}, medicines={cleaned_medicines}")
 
             order_request = schemas.AIAgentOrderRequest(
                 customer_name=customer_name,
@@ -115,12 +145,16 @@ async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
             print("Order result:", result)
 
             if result.get("success"):
-                msg = "Order placed! Order number {}. Total {} rupees. Thank you! Shukriya!".format(
-                    result.get("order_number"), result.get("total_amount"))
+                # Mention if some medicines were skipped
+                skipped = ""
+                if out_of_stock:
+                    skipped = " Note: {} stock mein nahi tha, skip kar diya.".format(", ".join(out_of_stock))
+                msg = "Order placed! Order number {}. Total {} rupees. Shukriya!{}".format(
+                    result.get("order_number"), result.get("total_amount"), skipped)
             else:
-                msg = "Sorry could not place order. {}".format(result.get("message"))
+                msg = "Sorry order nahi hua. {}".format(result.get("message"))
 
-            return {"results": [{"toolCallId": tool_call.get("id", "tool-1"), "result": msg}]}
+            return {"results": [{"toolCallId": tool_call_id, "result": msg}]}
 
         return {"status": "received"}
 
@@ -129,8 +163,6 @@ async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
         import traceback
         traceback.print_exc()
         return {"results": [{"toolCallId": "error", "result": "Error processing order. Please call again."}]}
-
-
 # ===================================================
 # ADD THIS SECTION TO YOUR main.py
 # Place it right after the existing VAPI WEBHOOK section
