@@ -39,6 +39,11 @@ def health_check():
     return {"status": "healthy"}
 
 # ===== VAPI WEBHOOK =====
+# ===================================================
+# REPLACE your existing vapi_webhook function in main.py
+# This handles messy data from Vapi gracefully
+# ===================================================
+
 @app.post("/api/vapi/webhook")
 async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
     try:
@@ -51,29 +56,79 @@ async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
             tool_calls = message.get("toolCalls", [])
             if not tool_calls:
                 return {"results": [{"toolCallId": "none", "result": "No order data"}]}
+
             tool_call = tool_calls[0]
             function_args = tool_call.get("function", {}).get("arguments", {})
+
+            # ── Clean medicines list ──────────────────────────────
+            raw_medicines = function_args.get("medicines", [])
+            cleaned_medicines = []
+            for m in raw_medicines:
+                # Extract just the number from quantity like "5 packs", "2 strips", "1"
+                raw_qty = str(m.get("quantity", "1"))
+                import re
+                qty_match = re.search(r'\d+', raw_qty)
+                qty = int(qty_match.group()) if qty_match else 1
+
+                # Normalize packaging
+                raw_pack = str(m.get("packaging", "strip")).lower()
+                valid_packagings = ["strip", "bottle", "box", "loose", "tube", "vial"]
+                packaging = "strip"  # default
+                for vp in valid_packagings:
+                    if vp in raw_pack:
+                        packaging = vp
+                        break
+
+                cleaned_medicines.append({
+                    "name": m.get("name", ""),
+                    "quantity": qty,
+                    "packaging": packaging
+                })
+
+            # ── Clean phone number ────────────────────────────────
+            raw_phone = str(function_args.get("customer_phone", "0000000000"))
+            digits_only = re.sub(r'\D', '', raw_phone)
+            # Add +91 if Indian number without country code
+            if len(digits_only) == 10:
+                phone = "+91" + digits_only
+            elif len(digits_only) > 10:
+                phone = "+" + digits_only
+            else:
+                phone = "+91" + digits_only.zfill(10)
+
+            # ── Clean name ────────────────────────────────────────
+            customer_name = function_args.get("customer_name", "").strip()
+            if not customer_name:
+                customer_name = "Customer"
+
+            print(f"Cleaned order -> name={customer_name}, phone={phone}, medicines={cleaned_medicines}")
+
             order_request = schemas.AIAgentOrderRequest(
-                customer_name=function_args.get("customer_name", ""),
-                customer_phone=function_args.get("customer_phone", ""),
-                customer_address=function_args.get("customer_address", None),
-                medicines=function_args.get("medicines", []),
-                language=function_args.get("language", "hindi")
+                customer_name=customer_name,
+                customer_phone=phone,
+                customer_address=function_args.get("customer_address", None) or None,
+                medicines=cleaned_medicines,
+                language=function_args.get("language", "hindi") or "hindi"
             )
+
             result = OrderService.create_order_from_ai_agent(db, order_request)
+            print("Order result:", result)
+
             if result.get("success"):
-                msg = "Order placed! Order number {}. Total {} rupees. Thank you!".format(
+                msg = "Order placed! Order number {}. Total {} rupees. Thank you! Shukriya!".format(
                     result.get("order_number"), result.get("total_amount"))
             else:
                 msg = "Sorry could not place order. {}".format(result.get("message"))
+
             return {"results": [{"toolCallId": tool_call.get("id", "tool-1"), "result": msg}]}
+
         return {"status": "received"}
+
     except Exception as e:
         print("Vapi webhook error:", str(e))
         import traceback
         traceback.print_exc()
         return {"results": [{"toolCallId": "error", "result": "Error processing order. Please call again."}]}
-
 
 
 # ===================================================
@@ -248,7 +303,6 @@ async def vapi_check_stock_bulk(request: Request, db: Session = Depends(get_db))
                 "result": "Stock check mein error hua. Please try again."
             }]
         }
-
 
 
 # ===== AI AGENT ROUTES =====
