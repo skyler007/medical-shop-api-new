@@ -74,6 +74,183 @@ async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
         traceback.print_exc()
         return {"results": [{"toolCallId": "error", "result": "Error processing order. Please call again."}]}
 
+
+
+# ===================================================
+# ADD THIS SECTION TO YOUR main.py
+# Place it right after the existing VAPI WEBHOOK section
+# ===================================================
+
+# ===== VAPI STOCK CHECK TOOL =====
+@app.post("/api/vapi/check-stock")
+async def vapi_check_stock(request: Request, db: Session = Depends(get_db)):
+    """
+    Vapi calls this endpoint mid-call as a Tool Call.
+    It checks if a medicine is in stock and returns
+    a spoken response in Hindi + English.
+    """
+    try:
+        body = await request.json()
+        print("Vapi check-stock received:", body)
+
+        message = body.get("message", {})
+        msg_type = message.get("type", "")
+
+        if msg_type != "tool-calls":
+            return {"status": "received"}
+
+        tool_calls = message.get("toolCalls", [])
+        if not tool_calls:
+            return {"results": [{"toolCallId": "none", "result": "No medicine name provided."}]}
+
+        tool_call = tool_calls[0]
+        tool_call_id = tool_call.get("id", "tool-1")
+        args = tool_call.get("function", {}).get("arguments", {})
+
+        medicine_name = args.get("medicine_name", "").strip()
+
+        if not medicine_name:
+            return {
+                "results": [{
+                    "toolCallId": tool_call_id,
+                    "result": "Nahi hai."
+                }]
+            }
+
+        # Search for the medicine (handles Hindi + English names)
+        from sqlalchemy import or_
+        medicines = db.query(models.Medicine).filter(
+            or_(
+                models.Medicine.name.ilike(f"%{medicine_name}%"),
+                models.Medicine.name_hindi.ilike(f"%{medicine_name}%"),
+                models.Medicine.generic_name.ilike(f"%{medicine_name}%")
+            )
+        ).all()
+
+        if not medicines:
+            return {
+                "results": [{
+                    "toolCallId": tool_call_id,
+                    "result": "Nahi hai."
+                }]
+            }
+
+        # Found the medicine - check stock
+        medicine = medicines[0]  # Best match
+        stock = medicine.stock_quantity
+        name_display = medicine.name
+
+        if stock <= 0:
+            result_msg = "Nahi hai."
+        else:
+            result_msg = "Haa."
+
+        print(f"Stock check: {name_display} -> qty={stock} -> {result_msg}")
+
+        return {
+            "results": [{
+                "toolCallId": tool_call_id,
+                "result": result_msg
+            }]
+        }
+
+    except Exception as e:
+        print("Stock check error:", str(e))
+        import traceback
+        traceback.print_exc()
+        return {
+            "results": [{
+                "toolCallId": "error",
+                "result": "Nahi hai."
+            }]
+        }
+
+
+# ===== VAPI BULK STOCK CHECK (check multiple medicines at once) =====
+@app.post("/api/vapi/check-stock-bulk")
+async def vapi_check_stock_bulk(request: Request, db: Session = Depends(get_db)):
+    """
+    Check stock for multiple medicines at once.
+    Vapi can call this after collecting the full order
+    to validate all items before confirming.
+    """
+    try:
+        body = await request.json()
+        message = body.get("message", {})
+        msg_type = message.get("type", "")
+
+        if msg_type != "tool-calls":
+            return {"status": "received"}
+
+        tool_calls = message.get("toolCalls", [])
+        if not tool_calls:
+            return {"results": [{"toolCallId": "none", "result": "No medicines provided."}]}
+
+        tool_call = tool_calls[0]
+        tool_call_id = tool_call.get("id", "tool-1")
+        args = tool_call.get("function", {}).get("arguments", {})
+
+        medicines_list = args.get("medicines", [])
+
+        if not medicines_list:
+            return {
+                "results": [{
+                    "toolCallId": tool_call_id,
+                    "result": "No medicines in the order. Koi medicine nahi bataya."
+                }]
+            }
+
+        from sqlalchemy import or_
+        available = []
+        unavailable = []
+
+        for item in medicines_list:
+            med_name = item.get("name", "").strip()
+            qty_requested = item.get("quantity", 1)
+
+            results = db.query(models.Medicine).filter(
+                or_(
+                    models.Medicine.name.ilike(f"%{med_name}%"),
+                    models.Medicine.name_hindi.ilike(f"%{med_name}%"),
+                    models.Medicine.generic_name.ilike(f"%{med_name}%")
+                )
+            ).all()
+
+            if not results:
+                unavailable.append(f"{med_name} (not found)")
+            else:
+                med = results[0]
+                if med.stock_quantity <= 0:
+                    unavailable.append(f"{med.name} (out of stock)")
+                elif med.stock_quantity < qty_requested:
+                    available.append(f"{med.name} (only {med.stock_quantity} available, you asked for {qty_requested})")
+                else:
+                    available.append(f"{med.name} x{qty_requested} ✓")
+
+        if not unavailable:
+            result_msg = "Sab haa."
+        else:
+            unavail_str = ', '.join(unavailable)
+            result_msg = f"{unavail_str} nahi hai."
+
+        return {
+            "results": [{
+                "toolCallId": tool_call_id,
+                "result": result_msg
+            }]
+        }
+
+    except Exception as e:
+        print("Bulk stock check error:", str(e))
+        return {
+            "results": [{
+                "toolCallId": "error",
+                "result": "Stock check mein error hua. Please try again."
+            }]
+        }
+
+
+
 # ===== AI AGENT ROUTES =====
 @app.post("/api/ai-agent/order", response_model=schemas.AIAgentOrderResponse)
 def create_order_from_ai_agent(order_request: schemas.AIAgentOrderRequest, db: Session = Depends(get_db)):
