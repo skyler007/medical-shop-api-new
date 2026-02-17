@@ -39,3 +39,5 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+"cloudflared.exe.exe" 
+"*.exe" 
