@@ -48,6 +48,11 @@ def health_check():
 # REPLACE your existing vapi_webhook function in main.py
 # ===================================================
 
+# ===================================================
+# REPLACE your existing vapi_webhook function in main.py
+# Handles BOTH Vapi payload formats + stock check
+# ===================================================
+
 @app.post("/api/vapi/webhook")
 async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
     try:
@@ -56,114 +61,124 @@ async def vapi_webhook(request: Request, db: Session = Depends(get_db)):
 
         body = await request.json()
         print("Vapi webhook received:", body)
+
+        # ── Detect payload format ─────────────────────────────
         message = body.get("message", {})
         msg_type = message.get("type", "")
 
+        # FORMAT 1: {"message": {"type": "tool-calls", "toolCalls": [...]}}
         if msg_type == "tool-calls":
             tool_calls = message.get("toolCalls", [])
             if not tool_calls:
                 return {"results": [{"toolCallId": "none", "result": "No order data"}]}
-
             tool_call = tool_calls[0]
             tool_call_id = tool_call.get("id", "tool-1")
             function_args = tool_call.get("function", {}).get("arguments", {})
 
-            # ── Clean medicines list ──────────────────────────────
-            raw_medicines = function_args.get("medicines", [])
-            cleaned_medicines = []
-            out_of_stock = []
+        # FORMAT 2: {"customer_name": "...", "medicines": [...]} (flat format)
+        elif "medicines" in body or "customer_name" in body:
+            print("Detected flat payload format from Vapi")
+            tool_call_id = "tool-1"
+            function_args = body  # the body itself is the args
 
-            for m in raw_medicines:
-                med_name = m.get("name", "").strip()
+        else:
+            print("Unknown format, ignoring:", msg_type)
+            return {"status": "received"}
 
-                # ── STOCK CHECK before adding to order ──
-                found = db.query(models.Medicine).filter(
-                    or_(
-                        models.Medicine.name.ilike(f"%{med_name}%"),
-                        models.Medicine.name_hindi.ilike(f"%{med_name}%"),
-                        models.Medicine.generic_name.ilike(f"%{med_name}%")
-                    )
-                ).first()
+        # ── Extract raw data ──────────────────────────────────
+        raw_medicines = function_args.get("medicines", [])
+        cleaned_medicines = []
+        out_of_stock = []
 
-                if not found or found.stock_quantity <= 0:
-                    print(f"Stock check FAILED: {med_name} -> out of stock or not found")
-                    out_of_stock.append(med_name)
-                    continue  # skip this medicine
+        for m in raw_medicines:
+            med_name = m.get("name", "").strip()
+            if not med_name:
+                continue
 
-                print(f"Stock check OK: {med_name} -> qty={found.stock_quantity}")
+            # ── STOCK CHECK ───────────────────────────────────
+            found = db.query(models.Medicine).filter(
+                or_(
+                    models.Medicine.name.ilike(f"%{med_name}%"),
+                    models.Medicine.name_hindi.ilike(f"%{med_name}%"),
+                    models.Medicine.generic_name.ilike(f"%{med_name}%")
+                )
+            ).first()
 
-                # Clean quantity
-                raw_qty = str(m.get("quantity", "1"))
-                qty_match = re.search(r'\d+', raw_qty)
-                qty = int(qty_match.group()) if qty_match else 1
+            if not found or found.stock_quantity <= 0:
+                print(f"Stock check FAILED: {med_name} -> out of stock or not found")
+                out_of_stock.append(med_name)
+                continue
 
-                # Clean packaging
-                raw_pack = str(m.get("packaging", "strip")).lower()
-                packaging = "strip"
-                for vp in ["strip", "bottle", "box", "loose", "tube", "vial"]:
-                    if vp in raw_pack:
-                        packaging = vp
-                        break
+            print(f"Stock check OK: {med_name} -> qty={found.stock_quantity}")
 
-                cleaned_medicines.append({
-                    "name": med_name,
-                    "quantity": qty,
-                    "packaging": packaging
-                })
+            # ── Clean quantity ────────────────────────────────
+            raw_qty = str(m.get("quantity", "1"))
+            qty_match = re.search(r'\d+', raw_qty)
+            qty = int(qty_match.group()) if qty_match else 1
 
-            # ── If ALL medicines are out of stock ────────────────
-            if not cleaned_medicines:
-                msg = "Sorry, ye medicines stock mein nahi hain: {}. Koi aur medicine chahiye?".format(
-                    ", ".join(out_of_stock))
-                print("All medicines out of stock:", out_of_stock)
-                return {"results": [{"toolCallId": tool_call_id, "result": msg}]}
+            # ── Clean packaging ───────────────────────────────
+            raw_pack = str(m.get("packaging", "strip")).lower()
+            packaging = "strip"
+            for vp in ["strip", "bottle", "box", "loose", "tube", "vial"]:
+                if vp in raw_pack:
+                    packaging = vp
+                    break
 
-            # ── Clean phone number ────────────────────────────────
-            raw_phone = str(function_args.get("customer_phone", "0000000000"))
-            digits_only = re.sub(r'\D', '', raw_phone)
-            if len(digits_only) == 10:
-                phone = "+91" + digits_only
-            elif len(digits_only) > 10:
-                phone = "+" + digits_only
-            else:
-                phone = "+91" + digits_only.zfill(10)
+            cleaned_medicines.append({
+                "name": med_name,
+                "quantity": qty,
+                "packaging": packaging
+            })
 
-            # ── Clean name ────────────────────────────────────────
-            customer_name = function_args.get("customer_name", "").strip() or "Customer"
-
-            print(f"Placing order -> name={customer_name}, phone={phone}, medicines={cleaned_medicines}")
-
-            order_request = schemas.AIAgentOrderRequest(
-                customer_name=customer_name,
-                customer_phone=phone,
-                customer_address=function_args.get("customer_address", None) or None,
-                medicines=cleaned_medicines,
-                language=function_args.get("language", "hindi") or "hindi"
-            )
-
-            result = OrderService.create_order_from_ai_agent(db, order_request)
-            print("Order result:", result)
-
-            if result.get("success"):
-                # Mention if some medicines were skipped
-                skipped = ""
-                if out_of_stock:
-                    skipped = " Note: {} stock mein nahi tha, skip kar diya.".format(", ".join(out_of_stock))
-                msg = "Order placed! Order number {}. Total {} rupees. Shukriya!{}".format(
-                    result.get("order_number"), result.get("total_amount"), skipped)
-            else:
-                msg = "Sorry order nahi hua. {}".format(result.get("message"))
-
+        # ── If ALL medicines out of stock ─────────────────────
+        if not cleaned_medicines:
+            msg = "Sorry, ye medicines stock mein nahi hain: {}. Koi aur medicine chahiye?".format(
+                ", ".join(out_of_stock))
+            print("All medicines out of stock:", out_of_stock)
             return {"results": [{"toolCallId": tool_call_id, "result": msg}]}
 
-        return {"status": "received"}
+        # ── Clean phone ───────────────────────────────────────
+        raw_phone = str(function_args.get("customer_phone", "0000000000"))
+        digits_only = re.sub(r'\D', '', raw_phone)
+        if len(digits_only) == 10:
+            phone = "+91" + digits_only
+        elif len(digits_only) > 10:
+            phone = "+" + digits_only
+        else:
+            phone = "+91" + digits_only.zfill(10)
+
+        # ── Clean name ────────────────────────────────────────
+        customer_name = function_args.get("customer_name", "").strip() or "Customer"
+
+        print(f"Placing order -> name={customer_name}, phone={phone}, medicines={cleaned_medicines}")
+
+        order_request = schemas.AIAgentOrderRequest(
+            customer_name=customer_name,
+            customer_phone=phone,
+            customer_address=function_args.get("customer_address", None) or None,
+            medicines=cleaned_medicines,
+            language=function_args.get("language", "hindi") or "hindi"
+        )
+
+        result = OrderService.create_order_from_ai_agent(db, order_request)
+        print("Order result:", result)
+
+        if result.get("success"):
+            skipped = ""
+            if out_of_stock:
+                skipped = " Note: {} stock mein nahi tha.".format(", ".join(out_of_stock))
+            msg = "Order placed! Order number {}. Total {} rupees. Shukriya!{}".format(
+                result.get("order_number"), result.get("total_amount"), skipped)
+        else:
+            msg = "Sorry order nahi hua. {}".format(result.get("message"))
+
+        return {"results": [{"toolCallId": tool_call_id, "result": msg}]}
 
     except Exception as e:
         print("Vapi webhook error:", str(e))
         import traceback
         traceback.print_exc()
         return {"results": [{"toolCallId": "error", "result": "Error processing order. Please call again."}]}
-# ===================================================
 # ADD THIS SECTION TO YOUR main.py
 # Place it right after the existing VAPI WEBHOOK section
 # ===================================================
