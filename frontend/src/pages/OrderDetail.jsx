@@ -27,7 +27,7 @@ export default function OrderDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
- const handlePrint = async () => {
+/*  const handlePrint = async () => {
   if (!order?.id) {
     alert("Order not found.");
     return;
@@ -49,6 +49,17 @@ export default function OrderDetail() {
     console.log("Download error:", err.response);
     alert("Failed to download invoice.");
   }
+}; */
+
+const handlePrint = () => {
+  const token = localStorage.getItem("token");
+
+  if (!order?.id) return;
+
+  const url = `http://54.204.152.20/api/invoices/${order.id}/download`;
+
+  // If your backend requires token:
+  window.open(url, "_blank");
 };
 
 
