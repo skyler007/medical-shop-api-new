@@ -11,7 +11,7 @@ const EMPTY_FORM = {
 
 export default function Medicines() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admi";
 
   const [medicines, setMedicines] = useState([]);
   const [filtered, setFiltered] = useState([]);
