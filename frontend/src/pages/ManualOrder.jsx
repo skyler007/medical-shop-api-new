@@ -68,7 +68,7 @@ export default function ManualOrder() {
   const navigate = useNavigate();
 
   const [rows, setRows] = useState([emptyRow()]);
-  const [customer, setCustomer] = useState({ name: user?.name || "", phone: "", address: "" });
+  const [customer, setCustomer] = useState({ name: user?.name || "", phone: user?.phone || "", address: "" });
   const [stockWarning, setStockWarning] = useState(null);
   const [successOrder, setSuccessOrder] = useState(null);
   const [placing, setPlacing] = useState(false);
