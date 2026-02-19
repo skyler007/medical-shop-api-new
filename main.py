@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 from typing import List
 import os
 
@@ -479,11 +480,26 @@ def get_my_orders(db: Session = Depends(get_db),
     ).order_by(models.Order.order_date.desc()).all()
 
 @app.get("/api/orders/{order_id}", response_model=schemas.OrderResponse)
-def get_order(order_id: int, db: Session = Depends(get_db),
-              _=Depends(get_current_user)):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+def get_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user)
+):
+    order = (
+        db.query(models.Order)
+        .options(
+            joinedload(models.Order.invoice),        # 👈 LOAD INVOICE
+            joinedload(models.Order.order_items)
+            .joinedload(models.OrderItem.medicine), # 👈 LOAD MEDICINE ALSO
+            joinedload(models.Order.customer)       # 👈 LOAD CUSTOMER
+        )
+        .filter(models.Order.id == order_id)
+        .first()
+    )
+
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
     return order
 
 @app.get("/api/orders/number/{order_number}", response_model=schemas.OrderResponse)
