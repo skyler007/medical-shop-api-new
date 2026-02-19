@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app import models, schemas
 from datetime import datetime
+from sqlalchemy import func
 from app.services.invoice_service import InvoiceGenerator
 import os
 
@@ -17,18 +18,34 @@ class OrderService:
         """Generate unique invoice number"""
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         return f"INV-{timestamp}"
-    
+
     @staticmethod
     def search_medicine(db: Session, query: str, limit: int = 10):
-        """Search medicine by name (Hindi or English) or generic name"""
-        medicines = db.query(models.Medicine).filter(
-            (models.Medicine.name.ilike(f"%{query}%")) |
-            (models.Medicine.name_hindi.ilike(f"%{query}%")) |
-            (models.Medicine.generic_name.ilike(f"%{query}%"))
-        ).limit(limit).all()
-        
-        return medicines
-    
+        return (
+            db.query(models.Medicine)
+            .filter(
+                (models.Medicine.name.ilike(f"%{query}%")) |
+                (models.Medicine.name_hindi.ilike(f"%{query}%")) |
+                (models.Medicine.generic_name.ilike(f"%{query}%"))
+            )
+            .order_by(models.Medicine.name)
+            .limit(limit)
+            .all()
+        )
+
+    @staticmethod
+    def get_medicines_by_name(db: Session, name: str):
+        clean_name = name.strip().replace("\ufeff", "")
+
+        variants = (
+            db.query(models.Medicine)
+            .filter(func.lower(models.Medicine.name) == func.lower(clean_name))
+            .order_by(models.Medicine.default_packaging)
+            .all()
+        )
+
+        return variants
+
     @staticmethod
     def get_or_create_customer(db: Session, name: str, phone: str, address: str = None):
         """Get existing customer or create new one"""

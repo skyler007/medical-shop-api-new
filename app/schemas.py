@@ -36,7 +36,7 @@ class MedicineBase(BaseModel):
     stock_quantity: int = 0
     reorder_level: int = 10
     default_packaging: str = "strip"
-    units_per_package: int = 10
+    units_per_package: Optional[int] = None
     category: Optional[str] = None
     prescription_required: bool = False
     batch_number: Optional[str] = None
@@ -54,6 +54,10 @@ class MedicineUpdate(BaseModel):
     reorder_level: Optional[int] = None
     default_packaging: Optional[str] = None
     units_per_package: Optional[int] = None
+    batch_number: Optional[str] = None
+    rack_location: Optional[str] = None
+    category: Optional[str] = None
+    expiry_date: Optional[datetime] = None
 
 class MedicineResponse(MedicineBase):
     id: int
@@ -188,3 +192,72 @@ class MedicineSearchRequest(BaseModel):
 class MedicineSearchResponse(BaseModel):
     medicines: List[MedicineResponse]
     total: int
+
+
+
+
+# Auth Schemas
+class UserRegister(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = None
+    password: str
+    role: Optional[str] = "customer"  # customer, shopkeeper (admin not selectable on register)
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    phone: Optional[str] = None
+    is_active: bool
+    role: str = "customer"
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UserAdminResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    phone: Optional[str] = None
+    is_active: bool
+    role: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+# Draft Order Schema
+class DraftOrderItem(BaseModel):
+    medicine_id: int
+    medicine_name: str
+    packaging_type: str = "strip"
+    quantity: int
+    price_per_unit: float
+    total_price: float
+
+class DraftOrder(BaseModel):
+    items: List[DraftOrderItem]
+    estimate_total: float
+    notes: Optional[str] = None

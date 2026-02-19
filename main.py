@@ -9,6 +9,7 @@ import os
 from app.database import engine, get_db
 from app import models, schemas
 from app.services.order_service import OrderService
+from app.auth import verify_password, get_password_hash, create_access_token, get_current_user, require_roles
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
@@ -362,7 +363,8 @@ def create_order_from_ai_agent(order_request: schemas.AIAgentOrderRequest, db: S
 
 # ===== MEDICINE ROUTES =====
 @app.post("/api/medicines", response_model=schemas.MedicineResponse, status_code=status.HTTP_201_CREATED)
-def create_medicine(medicine: schemas.MedicineCreate, db: Session = Depends(get_db)):
+def create_medicine(medicine: schemas.MedicineCreate, db: Session = Depends(get_db),
+                    _=Depends(require_roles("shopkeeper", "admin"))):
     db_medicine = models.Medicine(**medicine.dict())
     db.add(db_medicine)
     db.commit()
@@ -370,18 +372,21 @@ def create_medicine(medicine: schemas.MedicineCreate, db: Session = Depends(get_
     return db_medicine
 
 @app.get("/api/medicines", response_model=List[schemas.MedicineResponse])
-def get_medicines(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_medicines(skip: int = 0, limit: int = 100, db: Session = Depends(get_db),
+                  _=Depends(get_current_user)):
     return db.query(models.Medicine).offset(skip).limit(limit).all()
 
 @app.get("/api/medicines/{medicine_id}", response_model=schemas.MedicineResponse)
-def get_medicine(medicine_id: int, db: Session = Depends(get_db)):
+def get_medicine(medicine_id: int, db: Session = Depends(get_db),
+                 _=Depends(get_current_user)):
     medicine = db.query(models.Medicine).filter(models.Medicine.id == medicine_id).first()
     if not medicine:
         raise HTTPException(status_code=404, detail="Medicine not found")
     return medicine
 
 @app.put("/api/medicines/{medicine_id}", response_model=schemas.MedicineResponse)
-def update_medicine(medicine_id: int, medicine_update: schemas.MedicineUpdate, db: Session = Depends(get_db)):
+def update_medicine(medicine_id: int, medicine_update: schemas.MedicineUpdate, db: Session = Depends(get_db),
+                    _=Depends(require_roles("shopkeeper", "admin"))):
     medicine = db.query(models.Medicine).filter(models.Medicine.id == medicine_id).first()
     if not medicine:
         raise HTTPException(status_code=404, detail="Medicine not found")
@@ -392,7 +397,8 @@ def update_medicine(medicine_id: int, medicine_update: schemas.MedicineUpdate, d
     return medicine
 
 @app.delete("/api/medicines/{medicine_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_medicine(medicine_id: int, db: Session = Depends(get_db)):
+def delete_medicine(medicine_id: int, db: Session = Depends(get_db),
+                    _=Depends(require_roles("admin"))):
     medicine = db.query(models.Medicine).filter(models.Medicine.id == medicine_id).first()
     if not medicine:
         raise HTTPException(status_code=404, detail="Medicine not found")
@@ -400,13 +406,17 @@ def delete_medicine(medicine_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 @app.post("/api/medicines/search", response_model=schemas.MedicineSearchResponse)
-def search_medicines(search_request: schemas.MedicineSearchRequest, db: Session = Depends(get_db)):
+def search_medicines(search_request: schemas.MedicineSearchRequest, db: Session = Depends(get_db),
+                     _=Depends(get_current_user)):
     medicines = OrderService.search_medicine(db, search_request.query, search_request.limit)
     return {"medicines": medicines, "total": len(medicines)}
 
+
+
 # ===== CUSTOMER ROUTES =====
 @app.post("/api/customers", response_model=schemas.CustomerResponse, status_code=status.HTTP_201_CREATED)
-def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_db)):
+def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_db),
+                    _=Depends(require_roles("shopkeeper", "admin"))):
     existing = db.query(models.Customer).filter(models.Customer.phone == customer.phone).first()
     if existing:
         raise HTTPException(status_code=400, detail="Customer with this phone already exists")
@@ -417,18 +427,21 @@ def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_
     return db_customer
 
 @app.get("/api/customers", response_model=List[schemas.CustomerResponse])
-def get_customers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_customers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db),
+                  _=Depends(require_roles("shopkeeper", "admin"))):
     return db.query(models.Customer).offset(skip).limit(limit).all()
 
 @app.get("/api/customers/{customer_id}", response_model=schemas.CustomerResponse)
-def get_customer(customer_id: int, db: Session = Depends(get_db)):
+def get_customer(customer_id: int, db: Session = Depends(get_db),
+                 _=Depends(require_roles("shopkeeper", "admin"))):
     customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     return customer
 
 @app.get("/api/customers/phone/{phone}", response_model=schemas.CustomerResponse)
-def get_customer_by_phone(phone: str, db: Session = Depends(get_db)):
+def get_customer_by_phone(phone: str, db: Session = Depends(get_db),
+                          _=Depends(require_roles("shopkeeper", "admin"))):
     customer = db.query(models.Customer).filter(models.Customer.phone == phone).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -436,7 +449,8 @@ def get_customer_by_phone(phone: str, db: Session = Depends(get_db)):
 
 # ===== ORDER ROUTES =====
 @app.post("/api/orders", response_model=schemas.OrderResponse, status_code=status.HTTP_201_CREATED)
-def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
+def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db),
+                 _=Depends(get_current_user)):
     try:
         return OrderService.create_order(db, order)
     except ValueError as e:
@@ -445,18 +459,36 @@ def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Error creating order: {}".format(str(e)))
 
 @app.get("/api/orders", response_model=List[schemas.OrderResponse])
-def get_orders(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return db.query(models.Order).offset(skip).limit(limit).all()
+def get_orders(skip: int = 0, limit: int = 100, db: Session = Depends(get_db),
+               _=Depends(require_roles("shopkeeper", "admin"))):
+    return db.query(models.Order).order_by(models.Order.order_date.desc()).offset(skip).limit(limit).all()
+
+@app.get("/api/orders/my", response_model=List[schemas.OrderResponse])
+def get_my_orders(db: Session = Depends(get_db),
+                  current_user: models.User = Depends(require_roles("customer"))):
+    """Customer's own orders matched by phone."""
+    if not current_user.phone:
+        return []
+    customer = db.query(models.Customer).filter(
+        models.Customer.phone.ilike(f"%{current_user.phone.lstrip('+91').lstrip('91')}%")
+    ).first()
+    if not customer:
+        return []
+    return db.query(models.Order).filter(
+        models.Order.customer_id == customer.id
+    ).order_by(models.Order.order_date.desc()).all()
 
 @app.get("/api/orders/{order_id}", response_model=schemas.OrderResponse)
-def get_order(order_id: int, db: Session = Depends(get_db)):
+def get_order(order_id: int, db: Session = Depends(get_db),
+              _=Depends(get_current_user)):
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
 @app.get("/api/orders/number/{order_number}", response_model=schemas.OrderResponse)
-def get_order_by_number(order_number: str, db: Session = Depends(get_db)):
+def get_order_by_number(order_number: str, db: Session = Depends(get_db),
+                        _=Depends(get_current_user)):
     order = db.query(models.Order).filter(models.Order.order_number == order_number).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -482,7 +514,8 @@ def download_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
 # ===== DASHBOARD =====
 @app.get("/api/dashboard/stats")
-def get_dashboard_stats(db: Session = Depends(get_db)):
+def get_dashboard_stats(db: Session = Depends(get_db),
+                        _=Depends(require_roles("shopkeeper", "admin"))):
     from datetime import datetime
     total_orders = db.query(models.Order).count()
     total_customers = db.query(models.Customer).count()
@@ -497,10 +530,102 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "total_medicines": total_medicines, "low_stock_medicines": low_stock,
             "today_orders": today_orders, "total_revenue": revenue_sum}
 
+@app.get("/api/dashboard/my-stats")
+def get_my_stats(db: Session = Depends(get_db),
+                 current_user: models.User = Depends(require_roles("customer"))):
+    """Customer's own stats matched by phone."""
+    if current_user.phone:
+        phone_digits = current_user.phone.lstrip('+91').lstrip('91')
+        customer = db.query(models.Customer).filter(
+            models.Customer.phone.ilike(f"%{phone_digits}%")
+        ).first()
+        if customer:
+            my_orders = db.query(models.Order).filter(models.Order.customer_id == customer.id).all()
+            pending = sum(1 for o in my_orders if o.status == "pending")
+            return {"total_orders": len(my_orders), "pending_orders": pending,
+                    "total_spent": customer.total_amount_spent}
+    return {"total_orders": 0, "pending_orders": 0, "total_spent": 0.0}
+
 @app.get("/api/dashboard/low-stock")
-def get_low_stock_medicines(db: Session = Depends(get_db)):
+def get_low_stock_medicines(db: Session = Depends(get_db),
+                            _=Depends(require_roles("shopkeeper", "admin"))):
     return db.query(models.Medicine).filter(
         models.Medicine.stock_quantity <= models.Medicine.reorder_level).all()
+
+# ===== ADMIN ROUTES =====
+@app.get("/api/admin/users", response_model=List[schemas.UserAdminResponse])
+def get_all_users(db: Session = Depends(get_db),
+                  _=Depends(require_roles("admin"))):
+    return db.query(models.User).order_by(models.User.created_at.desc()).all()
+
+@app.put("/api/admin/users/{user_id}/status")
+def update_user_status(user_id: int, update: schemas.UserStatusUpdate,
+                       db: Session = Depends(get_db),
+                       current_user: models.User = Depends(require_roles("admin"))):
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot change your own status")
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = update.is_active
+    db.commit()
+    return {"message": "User status updated", "is_active": update.is_active}
+
+# ===== AUTH ROUTES =====
+@app.post("/api/auth/register", response_model=schemas.TokenResponse, status_code=status.HTTP_201_CREATED)
+def register(user_data: schemas.UserRegister, db: Session = Depends(get_db)):
+    existing = db.query(models.User).filter(models.User.email == user_data.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    allowed_roles = {"customer", "shopkeeper"}
+    role = user_data.role if user_data.role in allowed_roles else "customer"
+    user = models.User(
+        name=user_data.name,
+        email=user_data.email,
+        phone=user_data.phone,
+        password_hash=get_password_hash(user_data.password),
+        role=role
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token({"sub": str(user.id)})
+    return {"access_token": token, "token_type": "bearer", "user": user}
+
+@app.post("/api/auth/login", response_model=schemas.TokenResponse)
+def login(credentials: schemas.UserLogin, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == credentials.email).first()
+    if not user or not verify_password(credentials.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account disabled")
+    token = create_access_token({"sub": str(user.id)})
+    return {"access_token": token, "token_type": "bearer", "user": user}
+
+@app.get("/api/auth/me", response_model=schemas.UserResponse)
+def get_me(current_user: models.User = Depends(get_current_user)):
+    return current_user
+
+@app.put("/api/auth/profile", response_model=schemas.UserResponse)
+def update_profile(update: schemas.ProfileUpdate, db: Session = Depends(get_db),
+                   current_user: models.User = Depends(get_current_user)):
+    if update.name:
+        current_user.name = update.name
+    if update.phone is not None:
+        current_user.phone = update.phone
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+@app.put("/api/auth/change-password")
+def change_password(data: schemas.ChangePassword, db: Session = Depends(get_db),
+                    current_user: models.User = Depends(get_current_user)):
+    if not verify_password(data.current_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    current_user.password_hash = get_password_hash(data.new_password)
+    db.commit()
+    return {"message": "Password changed successfully"}
+
 
 if __name__ == "__main__":
     import uvicorn
