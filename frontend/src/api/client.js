@@ -56,8 +56,11 @@ export const api = {
 
   // Invoice
   downloadInvoice: (id) =>
-  client.get(`/api/invoices/${id}/download`, {
+  axios.get(`http://54.204.152.20/api/invoices/${id}/download`, {
     responseType: "blob",
+    headers: {
+      Authorization: `Bearer ${localStorage.getItem("token")}`,
+    },
   }),
 
 };
