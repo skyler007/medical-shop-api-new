@@ -1,0 +1,28 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            cd ~/medical-shop-api-new
+            git pull origin main
+            source venv/bin/activate
+            pip install -r requirements.txt
+            cd frontend
+            npm install
+            npm run build
+            sudo cp -r dist/* /var/www/html/
+            cd ..
+            sudo kill $(sudo lsof -t -i:8000) || true
+            nohup uvicorn main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
