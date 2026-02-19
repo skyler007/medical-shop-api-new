@@ -4,6 +4,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
+from fastapi.responses import StreamingResponse
+import io
+from sqlalchemy.orm import joinedload
+from app.services.invoice_service import InvoiceGenerator
 from typing import List
 import os
 
@@ -29,8 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-os.makedirs("invoices", exist_ok=True)
-app.mount("/invoices", StaticFiles(directory="invoices"), name="invoices")
+
 
 @app.get("/")
 def root():
@@ -520,13 +523,39 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/invoices/{invoice_id}/download")
 def download_invoice(invoice_id: int, db: Session = Depends(get_db)):
-    invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+
+    invoice = (
+        db.query(models.Invoice)
+        .options(
+            joinedload(models.Invoice.order)
+            .joinedload(models.Order.order_items)
+            .joinedload(models.OrderItem.medicine),
+            joinedload(models.Invoice.order)
+            .joinedload(models.Order.customer)
+        )
+        .filter(models.Invoice.id == invoice_id)
+        .first()
+    )
+
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
-        raise HTTPException(status_code=404, detail="Invoice PDF not found")
-    return FileResponse(invoice.pdf_path, media_type="application/pdf",
-                        filename="{}.pdf".format(invoice.invoice_number))
+
+    order = invoice.order
+
+    # Generate PDF in memory
+    buffer = io.BytesIO()
+    invoice_generator = InvoiceGenerator()
+    invoice_generator.generate_invoice_pdf(order, invoice, buffer)
+
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={invoice.invoice_number}.pdf"
+        }
+    )
 
 # ===== DASHBOARD =====
 @app.get("/api/dashboard/stats")

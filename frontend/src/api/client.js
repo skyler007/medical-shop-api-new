@@ -55,7 +55,11 @@ export const api = {
   updateUserStatus: (id, is_active) => client.put(`/api/admin/users/${id}/status`, { is_active }),
 
   // Invoice
-  downloadInvoice: (id) => `${BASE_URL || "http://localhost:8000"}/api/invoices/${id}/download`,
+  downloadInvoice: (id) =>
+  client.get(`/api/invoices/${id}/download`, {
+    responseType: "blob",
+  }),
+
 };
 
 export default client;

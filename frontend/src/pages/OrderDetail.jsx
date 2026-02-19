@@ -27,29 +27,31 @@ export default function OrderDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const handlePrint = async () => {
-    if (!order?.invoice) {
-      alert("Invoice not available for this order.");
-      return;
-    }
+ const handlePrint = async () => {
+  if (!order?.id) {
+    alert("Order not found.");
+    return;
+  }
 
-    try {
-      const response = await api.get(
-        `/api/invoices/${order.invoice.id}/download`,
-        { responseType: "blob" }
-      );
+  try {
+    const response = await api.downloadInvoice(order.id);
 
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `${order.order_number}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      alert("Failed to download invoice.");
-    }
-  };
+    const url = window.URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${order.order_number}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+
+  } catch (err) {
+    console.log("Download error:", err.response);
+    alert("Failed to download invoice.");
+  }
+};
+
+
 
   if (loading)
     return (

@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
+
 # Enums
 class PackagingTypeEnum(str, Enum):
     STRIP = "strip"
@@ -12,11 +13,13 @@ class PackagingTypeEnum(str, Enum):
     TUBE = "tube"
     VIAL = "vial"
 
+
 class OrderStatusEnum(str, Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+
 
 class PaymentMethodEnum(str, Enum):
     CASH = "cash"
@@ -24,7 +27,9 @@ class PaymentMethodEnum(str, Enum):
     UPI = "upi"
     ONLINE = "online"
 
-# Medicine Schemas
+
+# ================= MEDICINE =================
+
 class MedicineBase(BaseModel):
     name: str
     name_hindi: Optional[str] = None
@@ -42,8 +47,10 @@ class MedicineBase(BaseModel):
     batch_number: Optional[str] = None
     rack_location: Optional[str] = None
 
+
 class MedicineCreate(MedicineBase):
     pass
+
 
 class MedicineUpdate(BaseModel):
     name: Optional[str] = None
@@ -59,14 +66,17 @@ class MedicineUpdate(BaseModel):
     category: Optional[str] = None
     expiry_date: Optional[datetime] = None
 
+
 class MedicineResponse(MedicineBase):
     id: int
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
-# Customer Schemas
+
+# ================= CUSTOMER =================
+
 class CustomerBase(BaseModel):
     name: str
     phone: str
@@ -75,77 +85,45 @@ class CustomerBase(BaseModel):
     is_regular: bool = False
     customer_id: Optional[str] = None
 
+
 class CustomerCreate(CustomerBase):
     pass
+
 
 class CustomerResponse(CustomerBase):
     id: int
     total_orders: int = 0
     total_amount_spent: float = 0.0
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
-# Order Item Schemas
+
+# ================= ORDER ITEMS =================
+
 class OrderItemBase(BaseModel):
     medicine_id: int
     quantity: int
     packaging_type: str = "strip"
 
+
 class OrderItemCreate(OrderItemBase):
     pass
+
 
 class OrderItemResponse(OrderItemBase):
     id: int
     price_per_unit: float
     total_price: float
     medicine: Optional[MedicineResponse] = None
-    
+
     class Config:
         from_attributes = True
 
-# Order Schemas
-class OrderBase(BaseModel):
-    customer_id: Optional[int] = None
-    notes: Optional[str] = None
-    order_source: str = "phone"
-    language_used: Optional[str] = None
 
-class OrderCreate(BaseModel):
-    customer_name: str
-    customer_phone: str
-    customer_address: Optional[str] = None
-    items: List[OrderItemCreate]
-    notes: Optional[str] = None
-    order_source: str = "phone"
-    language_used: Optional[str] = "hindi"
-    
-    @validator('items')
-    def validate_items(cls, v):
-        if not v or len(v) == 0:
-            raise ValueError('Order must have at least one item')
-        return v
+# ================= INVOICE =================
 
-class OrderResponse(BaseModel):
-    id: int
-    order_number: str
-    customer: CustomerResponse
-    status: str
-    total_amount: float
-    discount_amount: float
-    tax_amount: float
-    final_amount: float
-    order_source: str
-    language_used: Optional[str]
-    notes: Optional[str]
-    order_date: datetime
-    order_items: List[OrderItemResponse]
-    
-    class Config:
-        from_attributes = True
-
-# Invoice Schemas
 class InvoiceResponse(BaseModel):
     id: int
     invoice_number: str
@@ -162,18 +140,59 @@ class InvoiceResponse(BaseModel):
     sent_via_email: bool
     sent_via_sms: bool
     invoice_date: datetime
-    
+
     class Config:
         from_attributes = True
 
-# AI Agent Request Schema (from voice agent)
+
+# ================= ORDER =================
+
+class OrderCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    customer_address: Optional[str] = None
+    items: List[OrderItemCreate]
+    notes: Optional[str] = None
+    order_source: str = "phone"
+    language_used: Optional[str] = "hindi"
+
+    @validator('items')
+    def validate_items(cls, v):
+        if not v or len(v) == 0:
+            raise ValueError('Order must have at least one item')
+        return v
+
+
+class OrderResponse(BaseModel):
+    id: int
+    order_number: str
+    customer: CustomerResponse
+    status: str
+    total_amount: float
+    discount_amount: float
+    tax_amount: float
+    final_amount: float
+    order_source: str
+    language_used: Optional[str]
+    notes: Optional[str]
+    order_date: datetime
+    order_items: List[OrderItemResponse]
+    invoice: Optional[InvoiceResponse] = None   # ✅ ADDED (only change)
+
+    class Config:
+        from_attributes = True
+
+
+# ================= AI AGENT =================
+
 class AIAgentOrderRequest(BaseModel):
     customer_name: str
     customer_phone: str
     customer_address: Optional[str] = None
-    medicines: List[dict]  # [{"name": "Paracetamol", "quantity": 2, "packaging": "strip"}]
-    language: str = "hindi"  # hindi, english, hinglish
+    medicines: List[dict]
+    language: str = "hindi"
     conversation_transcript: Optional[str] = None
+
 
 class AIAgentOrderResponse(BaseModel):
     success: bool
@@ -184,29 +203,33 @@ class AIAgentOrderResponse(BaseModel):
     total_amount: Optional[float] = None
     invoice_pdf_url: Optional[str] = None
 
-# Search Schema
+
+# ================= SEARCH =================
+
 class MedicineSearchRequest(BaseModel):
-    query: str  # Can search in Hindi or English
+    query: str
     limit: int = 10
+
 
 class MedicineSearchResponse(BaseModel):
     medicines: List[MedicineResponse]
     total: int
 
 
+# ================= AUTH =================
 
-
-# Auth Schemas
 class UserRegister(BaseModel):
     name: str
     email: str
     phone: Optional[str] = None
     password: str
-    role: Optional[str] = "customer"  # customer, shopkeeper (admin not selectable on register)
+    role: Optional[str] = "customer"
+
 
 class UserLogin(BaseModel):
     email: str
     password: str
+
 
 class UserResponse(BaseModel):
     id: int
@@ -220,6 +243,7 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class UserAdminResponse(BaseModel):
     id: int
     name: str
@@ -232,23 +256,29 @@ class UserAdminResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class UserStatusUpdate(BaseModel):
     is_active: bool
+
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
 
+
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
+
 
 class ChangePassword(BaseModel):
     current_password: str
     new_password: str
 
-# Draft Order Schema
+
+# ================= DRAFT =================
+
 class DraftOrderItem(BaseModel):
     medicine_id: int
     medicine_name: str
@@ -256,6 +286,7 @@ class DraftOrderItem(BaseModel):
     quantity: int
     price_per_unit: float
     total_price: float
+
 
 class DraftOrder(BaseModel):
     items: List[DraftOrderItem]
