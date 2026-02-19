@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Package, Download, User, Phone, Calendar } from "lucide-react";
+import { ArrowLeft, Package, Download, User, Phone, Calendar, Printer } from "lucide-react";
 import { api } from "../api/client";
 
 function statusBadge(s) {
@@ -47,8 +47,14 @@ export default function OrderDetail() {
         </div>
         <div className="ml-auto flex items-center gap-3">
           {statusBadge(order.status)}
+          <button
+            onClick={() => window.print()}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <Printer size={15} /> Print
+          </button>
           {order.invoice && (
-            <a
+
               href={api.downloadInvoice(order.invoice.id)}
               target="_blank"
               rel="noreferrer"
